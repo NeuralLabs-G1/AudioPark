@@ -3,14 +3,18 @@ package com.neurallabs.audiopark
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.database.Cursor
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.OpenableColumns
+import android.text.TextUtils
 import android.view.Gravity
-import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.RadioButton
@@ -30,6 +34,9 @@ class MainActivity : Activity() {
     private var selectedDeviceId: Int? = null
     private var selectedDeviceName: String? = null
     private var isPrepared = false
+    private var isLoading = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var loadRequestId = 0
 
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = refreshDevices()
@@ -57,14 +64,15 @@ class MainActivity : Activity() {
     private fun buildScreen() {
         val page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(22), dp(24), dp(18))
+            val horizontalPadding = if (resources.configuration.screenWidthDp < 360) 18 else 24
+            setPadding(dp(horizontalPadding), dp(22), dp(horizontalPadding), dp(18))
             setBackgroundColor(color(0x101614))
         }
         val scroll = ScrollView(this).apply { addView(page) }
         setContentView(scroll)
 
         page.addView(label("AUDIOPARK", 13f, 0x69E0C1, true))
-        page.addView(label("One player.\nYour outputs.", 34f, 0xF3F7F5, true).apply {
+        page.addView(label("One player.\nYour outputs.", if (resources.configuration.screenWidthDp < 360) 30f else 34f, 0xF3F7F5, true).apply {
             setPadding(0, dp(12), 0, dp(8))
         })
         page.addView(label("A practical first check of what this phone can route.", 15f, 0xA9B6B1))
@@ -78,14 +86,26 @@ class MainActivity : Activity() {
         page.addView(card, cardParams)
         card.addView(label("NOW PLAYING", 12f, 0x91A59D, true))
         trackTitle = label("Choose an audio file", 19f, 0xF3F7F5, true).apply {
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
             setPadding(0, dp(14), 0, dp(16))
         }
         card.addView(trackTitle)
-        val actions = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val actions = LinearLayout(this).apply {
+            orientation = if (resources.configuration.screenWidthDp < 360) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
         card.addView(actions)
-        actions.addView(button("Choose audio") { chooseAudio() }, weightParams())
+        val chooseButton = button("Choose audio") { chooseAudio() }
+        val chooseParams = if (actions.orientation == LinearLayout.HORIZONTAL) weightParams() else fullButtonParams()
+        actions.addView(chooseButton, chooseParams)
         playButton = button("Play") { togglePlayback() }
-        actions.addView(playButton, weightParams().apply { leftMargin = dp(10) })
+        val playParams = if (actions.orientation == LinearLayout.HORIZONTAL) {
+            weightParams().apply { leftMargin = dp(10) }
+        } else {
+            fullButtonParams().apply { topMargin = dp(10) }
+        }
+        actions.addView(playButton, playParams)
         val volumeLabel = label("PLAYER VOLUME", 12f, 0x91A59D, true).apply {
             setPadding(0, dp(20), 0, dp(4))
         }
@@ -128,6 +148,12 @@ class MainActivity : Activity() {
         releasePlayer()
         selectedUri = uri
         isPrepared = false
+        isLoading = true
+        val requestId = ++loadRequestId
+        trackTitle.text = displayName(uri)
+        statusText.text = "Preparing ${trackTitle.text}…"
+        playButton.text = "Loading…"
+        playButton.isEnabled = false
         val newPlayer = MediaPlayer()
         player = newPlayer
         try {
@@ -138,26 +164,44 @@ class MainActivity : Activity() {
                     .firstOrNull { it.id == id }?.let { newPlayer.setPreferredDevice(it) }
             }
             newPlayer.setOnPreparedListener {
+                if (requestId != loadRequestId) return@setOnPreparedListener
                 isPrepared = true
-                trackTitle.text = displayName(uri)
+                isLoading = false
                 playButton.text = "Play"
+                playButton.isEnabled = true
                 statusText.text = routeMessage()
             }
             newPlayer.setOnCompletionListener {
                 playButton.text = "Play"
+                statusText.text = "Finished · ${displayName(uri)}"
             }
             newPlayer.setOnErrorListener { _, _, _ ->
+                if (requestId != loadRequestId) return@setOnErrorListener true
                 isPrepared = false
+                isLoading = false
                 playButton.text = "Play"
-                statusText.text = "Could not play this file. Try another audio file."
+                playButton.isEnabled = true
+                statusText.text = "Could not play this audio file. Try an MP3, M4A, or WAV file."
                 true
             }
             newPlayer.prepareAsync()
-            trackTitle.text = "Loading audio…"
-            statusText.text = "Preparing the selected file."
+            mainHandler.postDelayed({
+                if (requestId == loadRequestId && isLoading) {
+                    isLoading = false
+                    isPrepared = false
+                    playButton.text = "Play"
+                    playButton.isEnabled = true
+                    statusText.text = "This file did not finish loading. Try another audio file."
+                    releasePlayer()
+                }
+            }, PREPARE_TIMEOUT_MS)
         } catch (error: Exception) {
             releasePlayer()
-            Toast.makeText(this, "Could not open this audio file", Toast.LENGTH_SHORT).show()
+            isLoading = false
+            trackTitle.text = displayName(uri)
+            playButton.text = "Play"
+            playButton.isEnabled = true
+            statusText.text = "Could not open this audio file. Try another file."
         }
     }
 
@@ -165,7 +209,8 @@ class MainActivity : Activity() {
         val activePlayer = player
         if (activePlayer == null || !isPrepared) {
             if (selectedUri == null) chooseAudio()
-            else Toast.makeText(this, "Audio is still loading", Toast.LENGTH_SHORT).show()
+            else if (isLoading) Toast.makeText(this, "Audio is still loading", Toast.LENGTH_SHORT).show()
+            else Toast.makeText(this, "This audio file is not ready to play", Toast.LENGTH_SHORT).show()
             return
         }
         if (activePlayer.isPlaying) {
@@ -237,8 +282,22 @@ class MainActivity : Activity() {
 
     private fun routeMessage() = "Preferred output: ${selectedDeviceName ?: "Android default"}. This is one route, not simultaneous playback."
 
-    private fun displayName(uri: Uri): String = uri.lastPathSegment?.substringAfterLast('/')
-        ?.substringAfterLast(':')?.takeIf { it.isNotBlank() } ?: "Selected audio file"
+    private fun displayName(uri: Uri): String {
+        val queriedName = contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null
+        )?.use { cursor: Cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
+            } else null
+        }
+        return queriedName?.takeIf { it.isNotBlank() }
+            ?: uri.path?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: "Selected audio file"
+    }
 
     private fun deviceType(type: Int): String = when (type) {
         AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Wired headphones"
@@ -250,6 +309,8 @@ class MainActivity : Activity() {
     }
 
     private fun releasePlayer() {
+        loadRequestId++
+        isLoading = false
         player?.runCatching { stop() }
         player?.release()
         player = null
@@ -278,6 +339,7 @@ class MainActivity : Activity() {
     }
 
     private fun weightParams() = LinearLayout.LayoutParams(0, dp(52), 1f)
+    private fun fullButtonParams() = LinearLayout.LayoutParams(-1, dp(52))
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun color(value: Long) = android.graphics.Color.rgb(
         ((value shr 16) and 0xFF).toInt(), ((value shr 8) and 0xFF).toInt(), (value and 0xFF).toInt()
@@ -285,5 +347,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQUEST_AUDIO = 1001
+        private const val PREPARE_TIMEOUT_MS = 15_000L
     }
 }
