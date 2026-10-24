@@ -3,6 +3,7 @@ package com.neurallabs.audiopark
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.MediaPlayer
@@ -30,7 +31,7 @@ class MainActivity : Activity() {
     private var selectedDeviceName: String? = null
     private var isPrepared = false
 
-    private val deviceCallback = object : AudioManager.AudioDeviceCallback() {
+    private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = refreshDevices()
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
             if (selectedDeviceId != null && audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
