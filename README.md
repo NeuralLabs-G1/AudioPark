@@ -10,11 +10,14 @@ AudioPark is an Android audio player prototype focused on understanding what the
 - Lists connected Android audio outputs and paired Bluetooth devices.
 - Lets you select one output for normal playback.
 - Includes a best-effort dual mode that creates two synchronized app-owned players when Android exposes two routable outputs.
+- Includes an experimental "Capture another app's audio" mode using Android's user-approved playback capture prompt.
 - Refreshes the output list when devices connect or disconnect.
 
 ## Important limitation
 
-Dual mode is best effort. It starts one player per selected output, but Android or the phone's audio hardware may reject one route, reroute both players, or produce audible timing drift. The app cannot force simultaneous wired-plus-Bluetooth playback when the OS does not expose both routes. The UI reports which mode was requested; test the actual outputs on the target phone.
+Dual mode is best effort. It starts one player per selected output, but Android or the phone's audio hardware may reject one route, reroute both players, or produce audible timing drift. The app cannot force simultaneous wired-plus-Bluetooth playback when the OS does not expose both routes.
+
+External capture has an additional platform restriction: Android only exposes playback from source apps that allow audio playback capture. A source app can block capture, and protected or unsupported streams may produce silence. The capture flow asks for the system's screen/audio permission each time and keeps a foreground notification while active.
 
 The first useful product milestone is to install this on the target phone, connect the wired headphones and TWS, and record which outputs Android exposes. If the phone/OS exposes a supported simultaneous route, AudioPark can add a capability-specific implementation later. If it exposes only one route, app code alone cannot make the original combination reliable.
 

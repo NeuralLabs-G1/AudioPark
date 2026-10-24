@@ -3,9 +3,11 @@ package com.neurallabs.audiopark
 import android.Manifest
 import android.app.Activity
 import android.bluetooth.BluetoothManager
+import android.content.BroadcastReceiver
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.database.Cursor
 import android.media.AudioDeviceCallback
@@ -17,6 +19,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.media.projection.MediaProjectionManager
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.text.TextUtils
@@ -47,6 +50,7 @@ class MainActivity : Activity() {
     private lateinit var timeText: TextView
     private lateinit var playButton: Button
     private lateinit var dualButton: Button
+    private lateinit var captureButton: Button
     private lateinit var seekBar: SeekBar
 
     private val songs = mutableListOf<Song>()
@@ -67,6 +71,16 @@ class MainActivity : Activity() {
     private var playersToPrepare = 0
     private var completionHandled = false
     private var loadRequestId = 0
+    private var captureRunning = false
+
+    private val captureStatusReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val message = intent?.getStringExtra(ExternalCaptureService.EXTRA_STATUS) ?: return
+            captureRunning = message.startsWith("Capturing")
+            updateCaptureButton()
+            statusText.text = message
+        }
+    }
 
     private val progressTicker = object : Runnable {
         override fun run() {
@@ -94,6 +108,9 @@ class MainActivity : Activity() {
         buildScreen()
         audioManager.registerAudioDeviceCallback(deviceCallback, null)
         mainHandler.post(progressTicker)
+        val captureFilter = IntentFilter(ExternalCaptureService.ACTION_STATUS)
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(captureStatusReceiver, captureFilter, Context.RECEIVER_NOT_EXPORTED)
+        else registerReceiver(captureStatusReceiver, captureFilter)
         refreshOutputs()
         requestAudioPermissionsOrScan()
     }
@@ -165,6 +182,11 @@ class MainActivity : Activity() {
             setPadding(0, dp(12), 0, 0)
         }
         playerCard.addView(statusText)
+        captureButton = button("Capture another app's audio") { startExternalCaptureFlow() }.apply {
+            setPadding(0, dp(10), 0, 0)
+            setTextSize(13f)
+        }
+        playerCard.addView(captureButton)
 
         page.addView(label("OUTPUTS", 12f, 0x91A59D, true).apply { setPadding(0, dp(26), 0, dp(5)) })
         page.addView(label("Select one output for normal mode, or two for best-effort dual mode.", 13f, 0xA9B6B1))
@@ -314,6 +336,49 @@ class MainActivity : Activity() {
         if (currentSong != null && !isLoading) restartCurrentSong()
     }
 
+    private fun updateCaptureButton() {
+        if (!::captureButton.isInitialized) return
+        captureButton.text = if (captureRunning) "Stop external capture" else "Capture another app's audio"
+        captureButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(color(if (captureRunning) 0xF4A7A7 else 0x69E0C1)))
+    }
+
+    private fun startExternalCaptureFlow() {
+        if (Build.VERSION.SDK_INT < 29) {
+            statusText.text = "External app audio capture requires Android 10 or newer."
+            return
+        }
+        if (captureRunning) {
+            stopExternalCapture()
+            return
+        }
+        releasePlayers()
+        playButton.text = "Play"
+        playButton.isEnabled = true
+        statusText.text = "Choose Share audio when Android asks for capture permission."
+        val manager = getSystemService(MediaProjectionManager::class.java)
+        startActivityForResult(manager.createScreenCaptureIntent(), CAPTURE_REQUEST)
+    }
+
+    private fun startExternalCaptureService(resultCode: Int, resultData: Intent) {
+        val serviceIntent = Intent(this, ExternalCaptureService::class.java).apply {
+            action = ExternalCaptureService.ACTION_START
+            putExtra(ExternalCaptureService.EXTRA_RESULT_CODE, resultCode)
+            putExtra(ExternalCaptureService.EXTRA_RESULT_DATA, resultData)
+            putExtra(ExternalCaptureService.EXTRA_DEVICE_IDS, selectedOutputIds.toIntArray())
+        }
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(serviceIntent) else startService(serviceIntent)
+        captureRunning = true
+        updateCaptureButton()
+        statusText.text = "Starting external audio capture…"
+    }
+
+    private fun stopExternalCapture() {
+        stopService(Intent(this, ExternalCaptureService::class.java))
+        captureRunning = false
+        updateCaptureButton()
+        statusText.text = "External audio capture stopped."
+    }
+
     private fun updateModeButtons() {
         dualButton.text = if (dualMode) "Dual mode ON" else "Single output"
         dualButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(color(if (dualMode) 0xD2F7A8 else 0x69E0C1)))
@@ -458,6 +523,11 @@ class MainActivity : Activity() {
     @Deprecated("The system document picker remains supported for this prototype")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == CAPTURE_REQUEST) {
+            if (resultCode == RESULT_OK && data != null) startExternalCaptureService(resultCode, data)
+            else statusText.text = "External audio capture was cancelled."
+            return
+        }
         if (requestCode == IMPORT_REQUEST && resultCode == RESULT_OK) {
             data?.data?.let { uri ->
                 val imported = Song(uri, displayName(uri), "Imported file", 0)
@@ -539,6 +609,8 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(progressTicker)
+        if (captureRunning) stopExternalCapture()
+        unregisterReceiver(captureStatusReceiver)
         audioManager.unregisterAudioDeviceCallback(deviceCallback)
         releasePlayers()
         super.onDestroy()
@@ -547,5 +619,6 @@ class MainActivity : Activity() {
     companion object {
         private const val PERMISSIONS_REQUEST = 2001
         private const val IMPORT_REQUEST = 2002
+        private const val CAPTURE_REQUEST = 2003
     }
 }
