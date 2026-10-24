@@ -1,0 +1,52 @@
+name: Build and publish Android release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build debug APK
+        run: gradle assembleDebug
+
+      - name: Name release APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk "app/build/outputs/apk/debug/AudioPark-${GITHUB_REF_NAME}-debug.apk"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "AudioPark ${{ github.ref_name }} (Prototype)"
+          prerelease: true
+          generate_release_notes: true
+          body: |
+            Early Android prototype for playing a selected audio file and inspecting connected output routes.
+
+            **Known limitation:** this build selects one preferred output. It does not guarantee simultaneous playback through wired headphones and Bluetooth TWS; that depends on Android and the phone's audio hardware.
+          files: app/build/outputs/apk/debug/AudioPark-${{ github.ref_name }}-debug.apk
