@@ -131,6 +131,7 @@ class MainActivity : Activity() {
         player = newPlayer
         try {
             newPlayer.setDataSource(this, uri)
+            newPlayer.setVolume(0.8f, 0.8f)
             selectedDeviceId?.let { id ->
                 audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
                     .firstOrNull { it.id == id }?.let { newPlayer.setPreferredDevice(it) }
