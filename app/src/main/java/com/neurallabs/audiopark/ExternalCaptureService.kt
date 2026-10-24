@@ -12,7 +12,7 @@ import android.media.AudioFormat
 import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
 import android.media.AudioTrack
-import android.media.MediaProjection
+import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
@@ -81,7 +81,7 @@ class ExternalCaptureService : Service() {
 
             val trackBuffer = AudioTrack.getMinBufferSize(sampleRate, playbackChannelMask, encoding).coerceAtLeast(sampleRate)
             val audioManager = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
-            val devices = deviceIds.mapNotNull { id ->
+            val devices = deviceIds.toList().mapNotNull { id ->
                 audioManager.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { it.id == id }
             }
             val trackCount = if (devices.isEmpty()) 1 else devices.size.coerceAtMost(2)
